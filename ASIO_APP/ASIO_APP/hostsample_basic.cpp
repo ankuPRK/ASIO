@@ -1,7 +1,11 @@
 /*
-	This code is is a modified version of the hostsample app available in the ASIO SDK available at steinsberg.net.
-	The project assumes that you have extracted the ASIO-SDK to the path: C:. i.e. after extraction you should be able to see C:\asiosdk2.3\ASIO SDK 2.3.pdf.
-	This is just a FREE app for students to understand programming using ASIO.
+	1)	This code is is a modified version of the hostsample app available in 
+		the ASIO SDK available at steinsberg.net.
+	2)	The project assumes that you have extracted the ASIO-SDK to C: 
+		i.e. after extraction you should be able to see C:\asiosdk2.3\ASIO SDK 2.3.pdf.
+	3)	This is just a FREE app for students to understand programming using ASIO.
+	4)	Credits: This version of app was developed under the mentorship of 
+		Mr. Rohit Agrawal, CEO of Khitchdee Technologies.
 */
 
 #include <stdio.h>
