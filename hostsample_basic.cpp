@@ -18,7 +18,8 @@
 #include "asiodrivers.h"
 #include "asiolist.h"
 #include <windows.h>
-
+#include <vector>
+#include <iostream>
 ///////////////macros////////////////
 #define TwoPi 6.28318531
 
@@ -31,6 +32,8 @@ long buffSize;
 long long int sampleSize = 0;
 HBRUSH hbrushbackground = CreateSolidBrush(RGB(0, 0, 0));			//160,255,255
 COLORREF textcolor = RGB(150, 150, 150);
+
+using namespace std;
 
 SIZE sStringScreenSize;
 LRESULT CALLBACK WndProc(
@@ -925,8 +928,15 @@ void load_buffer(int *pnBuffer, int nLeftOrRight)
 }
 
 void store_left_buffer(int *pnbuffer){
-
+	char str[300];
+	int i = 0;
+	while (pnbuffer[i] != NULL) {
+		i++;
+	}
+	sprintf(str,"Size of pnbuffer is %d\n",i);
+	OutputDebugString(str);
 	//place your code here
+	i = 0;
 	return;
 }
 void store_right_buffer(int *pnbuffer){
