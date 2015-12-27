@@ -7,8 +7,9 @@
 #include "asiodrivers.h"
 #include "asiolist.h"
 #include <windows.h>
-#include "myTools.h"				//self made library
-#include "signal_analysis.h"		//self made library
+#include "myTools.h"			//self made library
+#include "signal_analysis.h"	//self made library
+#include "myWav.h"
 #include <iostream>
 #include <vector>
 ///////////////macros////////////////
@@ -22,17 +23,18 @@
 AsioDriverList * asioDrvList = 0; //object of asiodriverlist
 LPASIODRVSTRUCT DrvList;    // link-list of the compatable drivers with information 
 int nleftcount = 0, nrightcount = 0;
-int spLeftBuffer[NUM];
-int spRightBuffer[NUM];
+short spLeftBuffer[TWICENUM];
+short spRightBuffer[TWICENUM];
 
 ///////////////brushes for rectangles and color pens for colored lines/////////////////////
 HBRUSH hbrushblack = CreateSolidBrush(RGB(20, 20, 20));
 HBRUSH hbrushbackground = CreateSolidBrush(RGB(0, 0, 0));			//160,255,255
-HPEN hpencyan = CreatePen(PS_SOLID, 0, RGB(255, 255, 0));
 HPEN hpenred = CreatePen(PS_SOLID, 0, RGB(100, 0, 0));
-HPEN hpenyellow = CreatePen(PS_DOT, 0, RGB(255, 255, 0));
+HPEN hpenyellow = CreatePen(PS_SOLID, 0, RGB(255, 255, 0));
 HPEN hpenblue = CreatePen(PS_SOLID, 0, RGB(0, 0, 100));
 COLORREF textcolor = RGB(150, 150, 150);
+
+FILE *fp = wav_write("test1.wav", 44100, 2, 16, 60000);
 
 SIZE sStringScreenSize;
 LRESULT CALLBACK WndProc(
@@ -144,6 +146,7 @@ void first_input(UINT message,
 void highlight(int cur);
 void last_action();
 HWND hwnd;
+HDC hDC;
 void(*pfnRespond)(
 	UINT message,
 	WPARAM wParam,
@@ -187,10 +190,9 @@ LRESULT CALLBACK WndProc(
 }
 
 
+
 void second_output()
 {
-	HDC hDC;
-	hDC = GetDC(hwnd);
 	RECT rectCorner = { 0, 0, uWidth*1.2, uHeight*1.3 };
 	FillRect(hDC, &rectCorner, hbrushbackground);
 	FillRect(hDC, &signalrectL, hbrushblack);
@@ -247,9 +249,6 @@ RECT rectRecording = { 2 * uWidth / 3, uHeight - 15, uWidth, uHeight };
 
 void second_input(UINT Message, WPARAM wParam, LPARAM lParam)
 {
-	// (rohit) this needs to go into second_input()
-	HDC hDC;
-	hDC = GetDC(hwnd);
 	int i = 0,j=0;
 	SetBkMode(hDC, TRANSPARENT);
 	char * reponse_str;
@@ -333,10 +332,6 @@ void first_output()
 {
 
 	int i;
-
-	HDC hDC;
-	hDC = GetDC(hwnd);
-
 	RECT rectCorner = { 0, 0, uWidth, uHeight*1.2 };
 	FillRect(hDC, &rectCorner, hbrushbackground);
 	//	SetBkColor(hDC, RGB(128, 128, 128));
@@ -395,10 +390,7 @@ void first_output()
 
 }
 
-void highlight(int cur)
-{
-	HDC hDC;
-	hDC = GetDC(hwnd);
+void highlight(int cur){
 
 	int uCornerX = uWidth / 3;
 	int uCornerY = (uHeight - (sStringScreenSize.cy * asioDrvList->asioGetNumDev())) / 2 + cur*sStringScreenSize.cy;
@@ -414,7 +406,6 @@ void first_input(UINT message,
 {
 	// note cur moves in circular order acc to key up or down
 	// when enter is pressed asio driver name is assigned a value acc to cur
-	HDC hDC = GetDC(hwnd);
 	switch (message)
 	{
 	case WM_KEYDOWN:
@@ -519,7 +510,7 @@ int WINAPI WinMain(
 	}
 
 	// for selection of asio driver  
-
+	hDC = GetDC(hwnd);
 	first_action();
 	pfnRespond = first_input;
 
@@ -889,71 +880,146 @@ void load_buffer(int *pnBuffer, int nLeftOrRight)
 }
 
 void store_left_buffer(int *pnbuffer){
-
-	HDC hdc;
-	hdc = GetDC(hwnd);
-	SetTextColor(hdc, textcolor);
-	SetBkMode(hdc, TRANSPARENT);
-	TextOutA(hdc, 10, 20, "Left:", 6);
-	POINT leftplot[NUM];
+	
+	SetTextColor(hDC, textcolor);
+	SetBkMode(hDC, TRANSPARENT);
+	TextOutA(hDC, 10, 20, "Left:", 6);
+	POINT leftplot[TWICENUM];
 	RECT rect, smallrect,tinyrect;
 	int i, j, k;
 	char str[300];
 	
-//	leftplot = (POINT *)malloc(sizeof(POINT)*NUM);
+	int nWrite = 0;
+	short sbuffer[512];
+	for (i = 0; i < 512; i++){
+		sbuffer[i] = pnbuffer[i] / 65536;	//convert 32bit integer into 16bit short
+	}
+	nWrite = fwrite(sbuffer, sizeof(short), 512, fp);
 
-//	SetRect(&rect, uWidth / 20, uHeight / 20, uWidth, uHeight / 2 - uHeight / 20+5);
-//	SetRect(&smallrect, 100, uHeight / 2, uWidth, uHeight/2+50);
-//	SetRect(&tinyrect, 18*uWidth/20.0 - 5, uHeight / 2, uWidth, uHeight / 2 + 150);
-	
 		switch (nleftcount){
 			case 0:
-				for (i = 0; i < HALFNUM; i++){				//convert 32bits into 16bits
-					spLeftBuffer[i] = pnbuffer[i];
+				for (i = 0; i < HALFNUM; i++){				
+					spLeftBuffer[i] = sbuffer[i];
 				}											
 				break;
 			case 1:
-				for (i = 0; i < HALFNUM; i++){				//convert 32bits into 16bits
-					spLeftBuffer[i + HALFNUM] = pnbuffer[i];
+				for (i = 0; i < HALFNUM; i++){
+					spLeftBuffer[i+HALFNUM] = sbuffer[i];
 				}
-//				FillRect(hdc, &windowrect, hbrushgrey);
-				FillRect(hdc, &signalrectL, hbrushblack);		//repaint black rectangle
-				for (i = 0; i < NUM; i++){
-					leftplot[i].x = uWidth / 20.0 + ((18 * uWidth) / 20.0)*((i*1.0) / NUM);
-					leftplot[i].y = uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - (spLeftBuffer[i] /65536.0)/32768.0);
-					sprintf(str, "%f ", leftplot[i].y);
-					OutputDebugString(str);
+				break;
+			case 2:
+				for (i = NUM; i < HALFNUM; i++){
+					spLeftBuffer[i+NUM] = sbuffer[i];
 				}
-				OutputDebugString("\n");
-				SelectObject(hdc, hpenblue);			//drawing 3 blue lines and two red lines 
-				MoveToEx(hdc, uWidth/20.0-1, uHeight / 4, NULL);
-				LineTo(hdc, uWidth * 19 / 20.0 + 1, uHeight / 4);
-				SelectObject(hdc, hpenred);
-				MoveToEx(hdc, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1-1 / 2.0), NULL);
-				LineTo(hdc, uWidth * 19 / 20.0 + 1, uHeight /20.0 + (uHeight/4.0-uHeight/20.0)*(1-1/2.0));
-				MoveToEx(hdc, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+1 / 2.0), NULL);
-				LineTo(hdc, uWidth * 19 / 20.0 + 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+1 / 2.0));
-				SelectObject(hdc, hpenblue);
-				MoveToEx(hdc, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1-3 / 4.0), NULL);
-				LineTo(hdc, uWidth * 19 / 20.0 + 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1-3 / 4.0));
-				MoveToEx(hdc, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+3 / 4.0), NULL);
-				LineTo(hdc, uWidth * 19 / 20.0 + 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+3 / 4.0));
+				break;
+			case 3:
+				for (i = 0; i < HALFNUM; i++){				
+					spLeftBuffer[i +NUM+HALFNUM] = sbuffer[i];
+				}
+				FillRect(hDC, &signalrectL, hbrushblack);		//repaint black rectangle
+				for (i = 0; i < TWICENUM; i++){
+					leftplot[i].x = (int)(uWidth / 20.0 + ((18 * uWidth) / 20.0)*((i*1.0) / TWICENUM));
+					leftplot[i].y = (int)(uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - spLeftBuffer[i] /32768.0));
+				}
+				SelectObject(hDC, hpenblue);			//drawing 3 blue lines and two red lines 
+				MoveToEx(hDC, uWidth/20.0-1, uHeight / 4, NULL);
+				LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 4);
+				SelectObject(hDC, hpenred);
+				MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1-1 / 2.0), NULL);
+				LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight /20.0 + (uHeight/4.0-uHeight/20.0)*(1-1/2.0));
+				MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+1 / 2.0), NULL);
+				LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+1 / 2.0));
+				SelectObject(hDC, hpenblue);
+				MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1-3 / 4.0), NULL);
+				LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1-3 / 4.0));
+				MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+3 / 4.0), NULL);
+				LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1+3 / 4.0));
 
-				SelectObject(hdc, hpencyan);
-				Polyline(hdc, leftplot, NUM);			//plot the spLeftBuffer. Since the buffer keeps coming 
+				SelectObject(hDC, hpenyellow);
+				Polyline(hDC, leftplot, TWICENUM);			//plot the spLeftBuffer. Since the buffer keeps coming 
 															//hence we get a dynamic wave effect
-				for (i = 0; i < HALFNUM; i++){						//shift the buffer at position 2 to position 1 and loads the new buffer at position 2 
+				for (i = 0; i < HALFNUM+NUM; i++){			//left-shift the 2048 size array by a step of 512
+															//to accomodate the next sample
 					spLeftBuffer[i] = spLeftBuffer[i+HALFNUM];
 				}
 				break;
-		}		//end of buffercountswitch
+		}
 
-		nleftcount = 1;// (nleftcount + 1) % 2;
-			return;
+		if (nleftcount!=3)
+		nleftcount++;
+		
+		return;
 }
 
 void store_right_buffer(int *pnbuffer){
-	int k = 0;
-	k = 2;
+
+	POINT rightplot[TWICENUM];
+	RECT rect, smallrect, tinyrect;
+	int i, j, k;
+	char str[300];
+	int nWrite = 0;
+	short sbuffer[512];
+	for (i = 0; i < 512; i++){
+		sbuffer[i] = pnbuffer[i] / 65536;	//convert 32bit integer into 16bit short
+	}
+	nWrite = fwrite(sbuffer, sizeof(short), 512, fp);
+
+	SetTextColor(hDC, textcolor);
+	SetBkMode(hDC, TRANSPARENT);
+	TextOutA(hDC, 10, uHeight / 2 + 20, "Right:", 6);
+
+	switch (nrightcount){
+	case 0:
+		for (i = 0; i < HALFNUM; i++){
+			spRightBuffer[i] = sbuffer[i];
+		}
+		break;
+	case 1:
+		for (i = 0; i < HALFNUM; i++){
+			spRightBuffer[i + HALFNUM] = sbuffer[i];
+		}
+		break;
+	case 2:
+		for (i = NUM; i < HALFNUM; i++){
+			spRightBuffer[i + NUM] = sbuffer[i];
+		}
+		break;
+	case 3:
+		for (i = 0; i < HALFNUM; i++){
+			spRightBuffer[i + NUM + HALFNUM] = sbuffer[i];
+		}
+		FillRect(hDC, &signalrectR, hbrushblack);		//repaint black rectangle
+		for (i = 0; i < TWICENUM; i++){
+			rightplot[i].x = (int)(uWidth / 20.0 + ((18 * uWidth) / 20.0)*((i*1.0) / TWICENUM));
+			rightplot[i].y = (int)(uHeight / 20.0 + uHeight/2 + (uHeight / 4.0 - uHeight / 20.0)*(1 - spRightBuffer[i] / 32768.0));
+		}
+		SelectObject(hDC, hpenblue);			//drawing 3 blue lines and two red lines 
+		MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - 3 / 4.0), NULL);
+		LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - 3 / 4.0));
+		MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 + 3 / 4.0), NULL);
+		LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 + 3 / 4.0));
+		MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 2 + uHeight / 4, NULL);
+		LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 2 + uHeight / 4);
+		SelectObject(hDC, hpenred);
+		MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - 1 / 2.0), NULL);
+		LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - 1 / 2.0));
+		MoveToEx(hDC, uWidth / 20.0 - 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 + 1 / 2.0), NULL);
+		LineTo(hDC, uWidth * 19 / 20.0 + 1, uHeight / 2 + uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 + 1 / 2.0));
+
+		SelectObject(hDC, hpenyellow);
+		Polyline(hDC, rightplot, TWICENUM);			//plot the spRightBuffer. Since the buffer keeps coming 
+		//hence we get a dynamic wave effect
+		for (i = 0; i < HALFNUM + NUM; i++){			//right-shift the 2048 size array by a step of 512
+			//to accomodate the next sample
+			spRightBuffer[i] = spRightBuffer[i + HALFNUM];
+		}
+		break;
+	}
+
+	if (nrightcount != 3)
+		nrightcount++;
+
 	return;
 }
+
+

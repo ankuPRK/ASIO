@@ -1,17 +1,62 @@
 #include<stdlib.h>
 #include<stdio.h>
+
 #define TwoPow31Minus1 2147483647
 #define factor 1000.0
+
 bool *get_knots(short *, int);
-POINT *autocorrelate(int *x, int arraysize);
+bool *get_zero_crossings(short *x, int arraysize);
+POINT *self_autocorrelate(short *x, int arraysize);
 double **characterise(short *, bool *, int);
 float *get_pitch_of_sample(short *, int arraysize);
-int *get_peak_envelope(short *x, int arraysize);
+float *get_energy_peak_envelope(short *x, int arraysize);
+POINT *self_autocorrelation_by_window(short *x, int windowsize, int arraysize);
+void smoothen_by_averaging(short *x, int arraysize, int Smoothing);
+short *get_derivative(short *x, int arraysize);
+double *get_convolution(short *x, int arraysize);
 
+//rectangular window structure//
+struct window{
+	bool bSizeDetermined = false;
+	int sampleWidth = 0;			//width of window in terms of number of samples
+	float *data;					//stores the samples inside the window
+	int nSampleCount = 0;
+
+	//average length of curve analysis parameters
+	float *pdLengthPastBuffer;
+	float fAvgPastLength = 0;
+	int nPastLengthBufferSize = 0;		//the Secondary buffer which corresponds to the previous sound
+	int nPastLengthBufferCount = 0;		//memory of the brain
+	float dAvgLength = 0;
+	double dLengthVariance = 0;
+
+	//average energy analysis parameters
+	float *pdEnergyPastBuffer;
+	float fAvgPastEnergy = 0;
+	int nPastEnergyBufferSize = 0;		//the Secondary buffer which corresponds to the previous sound 
+	int nPastEnergyBufferCount = 0;		//memory of the brain
+	float dAvgEnergy = 0;
+	double dEnergyVariance = 0;
+	float PrevMaxAmp = 0;
+	float CurrMaxAmp = 0;
+	float GlobalMaxAmp = 0;
+	bool bStarted = false;
+	bool bEnded = true;
+
+}window;
+
+/**1. Takes a SHORT array and its size as input
+	  and returns a bool array which is true ( or 1 )
+	  at all indices wherever there is:
+		a) local maxima
+		b) local minima
+		c) zero crossings
+	  At all other indices value is false ( or 0 ).
+*/
 bool *get_knots(short *x, int arraysize){
 
-	int i = 0, j = 0, k = 0, count = 0, count2 = 0, prev = 0;
-	bool max_true, min_true;
+	int i = 0, j = 0, k = 0, count = 0, prev = 0;
+	bool peak_true;
 	bool *bpKnot;
 	bpKnot = (bool *)malloc(sizeof(bool)*arraysize);
 
@@ -29,72 +74,41 @@ bool *get_knots(short *x, int arraysize){
 		if (x[i] * x[i + 1] <= 0 && (x[i] != 0 || x[i + 1] != 0)){
 			//x[i] is the zero crossing
 			bpKnot[i] = true;
-			i = i + 4;
+			i = i + 3;
 			continue;
 		}
-		//Test for the maxima
-		max_true = true;
+		//Test for the peak
+		peak_true = true;
 		for (j = i - 4; j < i + 5; j++){
-			max_true = max_true*(x[i] > x[j] || (i == j));
-			if (max_true == false)
+			peak_true = peak_true*(x[i]*x[i]> x[j]*x[j] || (i == j));
+			if (peak_true == false)
 				break;
 		}
 
-		if (max_true == false && x[i] == x[i - 1]){
-			max_true = true;
+		if (peak_true == false && x[i] == x[i - 1]){
+			peak_true = true;
 			for (j = i + 1; j < i + 5; j++){
-				max_true = max_true*(x[i] > x[j]);
-				if (max_true == false)
+				peak_true = peak_true*(x[i]*x[i] > x[j]*x[j]);
+				if (peak_true == false)
 					break;
 			}
 		}
-		else if (max_true == false && x[i] == x[i + 1]){
-			max_true = true;
+		else if (peak_true == false && x[i] == x[i + 1]){
+			peak_true = true;
 			for (j = i - 4; j < i; j++){
-				max_true = max_true*(x[i] > x[j]);
-				if (max_true == false)
+				peak_true = peak_true*(x[i]*x[i] > x[j]*x[j]);
+				if (peak_true == false)
 					break;
 			}
 		}
 
-		if (max_true == true){
-			//x[i] is the point of maxima
+		if (peak_true == true){
+			//x[i] is the point of maxima/minima
 			bpKnot[i] = true;
-			i = i + 4;
+			i = i + 3;
 			continue;
 		}
 
-		//Test for the minima
-		min_true = true;
-		for (j = i - 4; j < i + 5; j++){
-			min_true = min_true*(x[i] < x[j] || (i == j));
-			if (min_true == false)
-				break;
-		}
-
-		if (min_true == false && x[i] == x[i - 1]){
-			min_true = true;
-			for (j = i + 1; j < i + 5; j++){
-				min_true = min_true*(x[i] < x[j]);
-				if (min_true == false)
-					break;
-			}
-		}
-		else if (min_true == false && x[i] == x[i + 1]){
-			min_true = true;
-			for (j = i - 4; j < i; j++){
-				min_true = min_true*(x[i] < x[j]);
-				if (min_true == false)
-					break;
-			}
-		}
-
-
-		if (min_true == true){
-			//x[i] is the point of minima
-			bpKnot[i] = true;
-			i = i + 4;
-		}
 	}	//end of FOR loop
 
 	bpKnot[arraysize - 1] = true;
@@ -102,7 +116,16 @@ bool *get_knots(short *x, int arraysize){
 	return bpKnot;
 }	//end of function
 
-POINT *autocorrelate(int *x, int arraysize){
+/**2. Takes as input a SHORT array and its size
+	  to get its auto-correlation to itself.
+	  Since auto-correlation is symmetric about n=0
+	  we only consider positive shifting.
+	  The function returns a POINT array 
+	  which contains the auto-correlation values 
+	  vs the +ve shift values.
+	  Its amplitude varies between -1000 and 1000.
+*/
+POINT *self_autocorrelate(short *x, int arraysize){
 
 	long double val, divideMe;
 	int i = 0, j = 0;
@@ -113,10 +136,10 @@ POINT *autocorrelate(int *x, int arraysize){
 
 	val = 0;
 	for (j = i; j<arraysize; j++){
-		val = val + (((float)x[j] / 1024.0) * ((float)x[j - i] / 1024.0));
+		val = val + (((float)x[j] / 3276.5) * ((float)x[j - i] / 3276.5));
 
 	}
-	divideMe = val / 256.0;
+	divideMe = val / 1000.0;
 	arr[i].x = i;
 	arr[i].y = (val / divideMe);
 
@@ -126,7 +149,7 @@ POINT *autocorrelate(int *x, int arraysize){
 		//nFinal = (int)min(arraysize, arraysize + i);
 		val = 0;
 		for (j = i; j<arraysize; j++){
-			val = val + (((float)x[j] / 1024.0) * ((float)x[j - i] / 1024.0));
+			val = val + (((float)x[j] / 3276.5) * ((float)x[j - i] / 3276.5));
 
 		}
 		arr[i].x = i;
@@ -135,6 +158,34 @@ POINT *autocorrelate(int *x, int arraysize){
 	return arr;
 }
 
+/**3. This function takes as input a SHORT array,
+	  its size and the size of the rectangular autocorrelation window.
+	  The window is then traversed along the array 
+	  till it first touches the last sample. 
+	  Hence total no. of values is ( arraysize - windowsize + 1).
+	  The function returns a POINT array which contains the 
+	  auto-correlation values vs +ve shift values.  
+*/
+POINT *self_autocorrelation_by_window(short *x, int windowsize, int arraysize){
+
+	long double val, divideMe;
+	int i = 0, j = 0;
+	char *number;
+	POINT *arr;
+	arr = (POINT *)malloc(sizeof(POINT) * (arraysize-windowsize+1));
+
+	for (i = 0; i <= (arraysize - windowsize); i++){
+		val = 0;
+		for (j = i; j<i+windowsize; j++){
+			val = val + (((float)x[j] / 3276.5) * ((float)x[j - i] / 3276.5));
+		}
+		arr[i].x = i;
+		arr[i].y = val;
+	}
+	return arr;
+}
+
+/*
 double **characterise(short *spBuffer, bool *bpKnot, int arraysize){
 	int i = 0, j = 0, k = 0, l = 0;
 	int nKnotCount = 0, nExtraKnot = 0, count = 0;
@@ -144,6 +195,31 @@ double **characterise(short *spBuffer, bool *bpKnot, int arraysize){
 	int nthreeKnots[3][2];
 	POINT five_points[5];
 	FILE *fpcreate = fopen("abcd.txt","w");
+
+	for (i = 0; i < arraysize; i++){
+		nKnotCount = nKnotCount + (int)bpKnot[i];
+	}
+
+	if (nKnotCount < 3){
+		bpKnot[(arraysize - 1) / 2] = true;
+		nKnotCount++;
+	}
+	else
+		if ((nKnotCount - 3) % 2 != 0){
+
+			for (j = arraysize - 2; j > 0; j--){
+				if (bpKnot[j]){
+					nExtraKnot = nExtraKnot + j;
+					count++;
+				}
+				if (count == 2){
+					count = 0;
+					break;
+				}
+			}
+			bpKnot[nExtraKnot / 2] = true;
+			nKnotCount++;
+		}
 
 	xMatrix = (double **)malloc(sizeof(double *) * 4);
 
@@ -230,7 +306,7 @@ double **characterise(short *spBuffer, bool *bpKnot, int arraysize){
 				}									//fill every cell
 
 
-				xInverse = Inverse(xMatrix, 4);
+				xInverse = inverse_of_matrix(xMatrix, 4);
 				//free(xMatrix);
 				//xInverse = xMatrix;
 				//fill the Y matrix
@@ -273,7 +349,16 @@ double **characterise(short *spBuffer, bool *bpKnot, int arraysize){
 
 	return dppabcd;
 }
+*/
 
+/**4. This function finds the time period of a signal
+	  by calculating the time difference between 
+	  largest and second largest peaks of auto-correlation
+	  and returns the inverse of this time-period 
+	  as well as the ratio of second peak to first peak.
+	  The length of auto-correlation window for this function 
+	  is of half the length of the arraysize of the input SHORT array. 
+*/
 float *get_pitch_of_sample(short *x, int arraysize){
 
 	int i = 0, j = 0;
@@ -282,7 +367,7 @@ float *get_pitch_of_sample(short *x, int arraysize){
 	int nfirstpeak = 0, nsecondpeak = 0;			//first peak is zero obviously
 	float distance = 0;
 	float *ffrequency;
-	ffrequency = (float *)malloc(sizeof(float) * 3);
+	ffrequency = (float *)malloc(sizeof(float) * 2);
 
 	for (i = 0; i < arraysize / 2; i++){
 		spCorrArray[i] = 0;
@@ -299,7 +384,6 @@ float *get_pitch_of_sample(short *x, int arraysize){
 	if (i == arraysize / 2){
 		ffrequency[0] = 0.0;
 		ffrequency[1] = 0.0;
-		ffrequency[2] = 0.0;
 		return ffrequency;
 	}
 
@@ -314,31 +398,34 @@ float *get_pitch_of_sample(short *x, int arraysize){
 	if (nfirstpeak - nsecondpeak<0){
 		ffrequency[0] = 0.0;
 		ffrequency[1] = 0.0;
-		ffrequency[2] = 0.0;
 		return ffrequency;
 	}
 
 
 	ffrequency[0] = 44100.0 / (distance*1.0);
-	ffrequency[1] = (float)(nfirstpeak - nsecondpeak) / ((float)nfirstpeak / 100.0);
-	ffrequency[2] = (10.0*nsecondpeak) / (nfirstpeak*2.0);
+	ffrequency[1] = nsecondpeak/nfirstpeak;
 	//free(spCorrArray);
 	return ffrequency;
 }
 
-int *get_peak_envelope(short *x, int arraysize){
+/**5. Returns a float array which is the 
+	  peak envelope of the energy of the input SHORT array.
+	  Its value is scaled between 0 to 10000.
+	  NOTE: All the consecutive points of the envelope are connected linearly.  
+*/
+float *get_energy_peak_envelope(short *x, int arraysize){
 
 	int i = 0, j = 0, k = 0, prev = 0;
 	bool peak_true;
-	int *npBuffer;
-	npBuffer = (int *)malloc(sizeof(int)*arraysize);
-
+	float *fpBuffer;
+	fpBuffer = (float *)malloc(sizeof(float)*arraysize);
+	fpBuffer[i] = (x[i] / 327.68) * (x[i] / 327.68);
 	// check maxima in a size of nine samples i.e. frequencies more than (44100/9)~4900 aren't considered.
-	for (i = 4; i < arraysize - 4; i++){
+	for (i = 3; i < arraysize - 3; i++){
 
 		//Test for the maxima
 		peak_true = true;
-		for (j = i - 4; j < i + 5; j++){
+		for (j = i - 3; j < i + 4; j++){
 			peak_true = peak_true*(x[i]*x[i] > x[j]*x[j] || (i == j));
 			if (peak_true == false)
 				break;
@@ -346,7 +433,7 @@ int *get_peak_envelope(short *x, int arraysize){
 
 		if (peak_true == false && x[i] == x[i - 1]){
 			peak_true = true;
-			for (j = i + 1; j < i + 5; j++){
+			for (j = i + 1; j < i + 4; j++){
 				peak_true = peak_true*(x[i]*x[i] > x[j]*x[j]);
 				if (peak_true == false)
 					break;
@@ -354,7 +441,7 @@ int *get_peak_envelope(short *x, int arraysize){
 		}
 		else if (peak_true == false && x[i] == x[i + 1]){
 			peak_true = true;
-			for (j = i - 4; j < i; j++){
+			for (j = i - 3; j < i; j++){
 				peak_true = peak_true*(x[i]*x[i] > x[j]*x[j]);
 				if (peak_true == false)
 					break;
@@ -362,18 +449,120 @@ int *get_peak_envelope(short *x, int arraysize){
 		}
 
 		if (peak_true == true){
-			//x[i] is the point of maxima
+			fpBuffer[i] = (x[i] / 327.68)*(x[i] / 327.68);
 			for (k = prev; k <= i; k++){
-				npBuffer[k] = (x[i] * x[i])/4;
+				fpBuffer[k] = fpBuffer[prev] + ((fpBuffer[i] - fpBuffer[prev]) / (i*1.0 - prev*1.0))*(k - prev);
 			}
 			prev = i+1;
-			i = i + 3;
+			i = i + 2;
 		}
 	}	//end of FOR loop
 
-	for (j = prev; j < arraysize; j++){
-		npBuffer[j] = x[i] * x[i];
+	fpBuffer[arraysize - 1] = (x[arraysize - 1] / 327.68)*(x[arraysize - 1] / 327.68);
+	for (k = prev; k < arraysize; k++){
+		fpBuffer[k] = fpBuffer[prev] + ((fpBuffer[i] - fpBuffer[prev]) / (i*1.0 - prev*1.0))*(k - prev);
 	}
 
-	return npBuffer;
+	return fpBuffer;
 }
+
+/**7. This function takes a SHORT array x, 
+	  its length and the smoothing size as input and
+	  smoothens the signal stored in array
+	  by replacing each element x[i] 
+	  by the average of 2*Smoothing+1 elements 
+	  distributed uniformly around it.
+*/
+void smoothen_by_averaging(short *x, int arraysize, int Smoothing){
+
+	if (Smoothing < 0)
+		return;
+
+	short *copy = (short *)malloc(sizeof(short)*arraysize);
+	int i, j;
+
+	for (i = 0; i < arraysize; i++){
+		copy[i] = x[i];
+	}
+
+	for (i = Smoothing; i < arraysize - Smoothing; i++){
+		x[i] = 0;
+		for (j = i - Smoothing; j < i + Smoothing; j++){
+			x[i] = x[i] + copy[j];
+		}
+		x[i] = x[i] / (2 * Smoothing + 1);
+	}
+	return;
+}
+
+
+/**8. Takes a SHORT array and its size as input
+	  and returns a bool array of same size
+	  which is true ( or 1 ) at those indices 
+	  where there is a zero crossing.
+	  At all other indices value is false ( or 0 ).
+*/
+bool *get_zero_crossings(short *x, int arraysize){
+
+	int i = 0, j = 0, k = 0, count = 0, prev = 0;
+	bool peak_true;
+	bool *bpKnot;
+	bpKnot = (bool *)malloc(sizeof(bool)*arraysize);
+
+	for (i = 0; i < arraysize; i++){
+		bpKnot[i] = false;
+	}
+
+	count = 0;
+	bpKnot[0] = true;
+
+	for (i = 0; i < arraysize - 1; i++){
+		//Test for the zero crossing
+		if (x[i] * x[i + 1] <= 0 && (x[i] != 0 || x[i + 1] != 0)){
+			//x[i] is the zero crossing
+			bpKnot[i] = true;
+		}
+	}	//end of FOR loop
+
+	return bpKnot;
+}	
+
+/**9. Takes a SHORT array and its arraysize as input 
+	  and returns an array of size arraysize - 1
+	  containing the 'left' discrete derivatives of the sequence
+*/
+short *get_derivative(short *x, int arraysize){
+	short *derivative = (short *)malloc(sizeof(short)*(arraysize - 1));
+	int i, j;
+
+	for (i = 0; i < arraysize - 1; i++){
+		derivative[i] = x[i + 1] - x[i];
+	}
+
+	return derivative;
+}
+
+/**10. This function takes two SHORT arrays:
+		a) the input signal: x[n]		(which is zero for every n<0)
+		b) the inpulse response signal: h[n]	(which is zero for every n<0)
+	   And then it returns a DOUBLE array containing y[n] = 0.0001 times x[n](convolved with)h[n]
+	   which is zero everywhere except from n=0 to n = x_size+h_size-1
+*/
+double *get_discrete_convolution(short *x, int x_size,short *h, int h_size){
+
+	int n = 0, k = 0;
+	double *y = (double *)malloc(sizeof(double)*(x_size + h_size - 1));
+
+	for (n = 0; n < x_size + h_size - 1; n++){
+		y[n] = 0;
+		for (k = max(0,n-x_size+1); k <= min(n,h_size - 1); k++){
+			y[n] = y[n] + (h[k]/100.0) * (x[n - k]/100.0);
+		}
+	}
+
+	return y;
+}
+
+
+
+
