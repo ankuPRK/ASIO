@@ -25,9 +25,10 @@ LPASIODRVSTRUCT DrvList;    // link-list of the compatable drivers with informat
 int nleftcount = 0, nrightcount = 0;
 short spLeftBuffer[TWICENUM];
 short spRightBuffer[TWICENUM];
+float *Gkernel, prevfrequency=0, currfrequency;
 
 ///////////////brushes for rectangles and color pens for colored lines/////////////////////
-HBRUSH hbrushblack = CreateSolidBrush(RGB(20, 20, 20));
+HBRUSH hbrushGrey = CreateSolidBrush(RGB(20, 20, 20));
 HBRUSH hbrushbackground = CreateSolidBrush(RGB(0, 0, 0));			//160,255,255
 HPEN hpenred = CreatePen(PS_SOLID, 0, RGB(100, 0, 0));
 HPEN hpenyellow = CreatePen(PS_SOLID, 0, RGB(255, 255, 0));
@@ -157,7 +158,7 @@ int  uHeight = GetSystemMetrics(SM_CYFULLSCREEN);
 /////////////some rectangles//////////////////////
 RECT signalrectL = { uWidth / 20 - 2, uHeight / 20 - 2, (19 * uWidth) / 20 + 2, uHeight / 2.0 - uHeight / 20.0 + 2 };
 RECT signalrectR = { uWidth / 20 - 2, uHeight / 2.0 + uHeight / 20.0 - 2, (19 * uWidth) / 20 + 2, uHeight - uHeight / 20 + 2 };
-
+RECT freqRect = { (uWidth * 5) / 6, uHeight / 2+20, uWidth, uHeight / 2 - 5 };
 // this is a half screen black rectangle on which the sound signal is displayed
 RECT creativerect = { 2*uWidth/3, uHeight / 2 - uHeight/20.0 + 2, uWidth, uHeight / 2.0 + uHeight / 20.0 - 2 };
 // to clear the creative area i.e. lower half screen whenever mode is changed
@@ -195,8 +196,8 @@ void second_output()
 {
 	RECT rectCorner = { 0, 0, uWidth*1.2, uHeight*1.3 };
 	FillRect(hDC, &rectCorner, hbrushbackground);
-	FillRect(hDC, &signalrectL, hbrushblack);
-	FillRect(hDC, &signalrectR, hbrushblack);
+	FillRect(hDC, &signalrectL, hbrushGrey);
+	FillRect(hDC, &signalrectR, hbrushGrey);
 
 	//SelectObject(hDC, hpenyellow);
 	SelectObject(hDC, hpenred);
@@ -472,7 +473,6 @@ int WINAPI WinMain(
 	wc.lpszClassName = "WindowClass";
 	wc.hIcon = LoadIcon(NULL, IDI_APPLICATION); // Load a standard icon 
 	wc.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
-
 	if (!RegisterClassEx(&wc))
 	{
 		MessageBox(
@@ -511,6 +511,7 @@ int WINAPI WinMain(
 
 	// for selection of asio driver  
 	hDC = GetDC(hwnd);
+	Gkernel = get_gaussian_filter(7, 1.0);
 	first_action();
 	pfnRespond = first_input;
 
@@ -881,6 +882,7 @@ void load_buffer(int *pnBuffer, int nLeftOrRight)
 
 void store_left_buffer(int *pnbuffer){
 	
+	
 	SetTextColor(hDC, textcolor);
 	SetBkMode(hDC, TRANSPARENT);
 	TextOutA(hDC, 10, 20, "Left:", 6);
@@ -888,9 +890,11 @@ void store_left_buffer(int *pnbuffer){
 	RECT rect, smallrect,tinyrect;
 	int i, j, k;
 	char str[300];
-	
+	short *gaussianBuffer;
 	int nWrite = 0;
 	short sbuffer[512];
+	float test;
+	float *ffreq;
 	for (i = 0; i < 512; i++){
 		sbuffer[i] = pnbuffer[i] / 65536;	//convert 32bit integer into 16bit short
 	}
@@ -916,10 +920,23 @@ void store_left_buffer(int *pnbuffer){
 				for (i = 0; i < HALFNUM; i++){				
 					spLeftBuffer[i +NUM+HALFNUM] = sbuffer[i];
 				}
-				FillRect(hDC, &signalrectL, hbrushblack);		//repaint black rectangle
+				gaussianBuffer = filter1D(spLeftBuffer, TWICENUM, Gkernel, 7, 3, 0);
+					ffreq = get_pitch_of_sample(gaussianBuffer, TWICENUM);
+					currfrequency = ffreq[0];
+					if ((currfrequency - prevfrequency)*(currfrequency - prevfrequency)>25.0 && currfrequency < 20000.0){
+						FillRect(hDC, &freqRect, hbrushbackground);		//repaint black rectangle
+						sprintf(str, "Freq: %dHz", (int)currfrequency);	//print the data
+						TextOut(hDC, (uWidth * 5) / 6, uHeight / 2 - 7
+							, str, strlen(str));
+						prevfrequency = currfrequency;
+					}
+				for (i = 0; i < TWICENUM; i++){
+					test = gaussianBuffer[i];
+				}
+				FillRect(hDC, &signalrectL, hbrushGrey);		//repaint black rectangle
 				for (i = 0; i < TWICENUM; i++){
 					leftplot[i].x = (int)(uWidth / 20.0 + ((18 * uWidth) / 20.0)*((i*1.0) / TWICENUM));
-					leftplot[i].y = (int)(uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - spLeftBuffer[i] /32768.0));
+					leftplot[i].y = (int)(uHeight / 20.0 + (uHeight / 4.0 - uHeight / 20.0)*(1 - gaussianBuffer[i] /32768.0));
 				}
 				SelectObject(hDC, hpenblue);			//drawing 3 blue lines and two red lines 
 				MoveToEx(hDC, uWidth/20.0-1, uHeight / 4, NULL);
@@ -988,7 +1005,7 @@ void store_right_buffer(int *pnbuffer){
 		for (i = 0; i < HALFNUM; i++){
 			spRightBuffer[i + NUM + HALFNUM] = sbuffer[i];
 		}
-		FillRect(hDC, &signalrectR, hbrushblack);		//repaint black rectangle
+		FillRect(hDC, &signalrectR, hbrushGrey);		//repaint black rectangle
 		for (i = 0; i < TWICENUM; i++){
 			rightplot[i].x = (int)(uWidth / 20.0 + ((18 * uWidth) / 20.0)*((i*1.0) / TWICENUM));
 			rightplot[i].y = (int)(uHeight / 20.0 + uHeight/2 + (uHeight / 4.0 - uHeight / 20.0)*(1 - spRightBuffer[i] / 32768.0));

@@ -14,6 +14,8 @@ POINT *self_autocorrelation_by_window(short *x, int windowsize, int arraysize);
 void smoothen_by_averaging(short *x, int arraysize, int Smoothing);
 short *get_derivative(short *x, int arraysize);
 double *get_convolution(short *x, int arraysize);
+float *get_gaussian_filter(int size, float sigma);
+short *filter1D(short *inputArray, int, float *filter,int filterSize, int center, int boundaryType);
 
 //rectangular window structure//
 struct window{
@@ -362,7 +364,7 @@ double **characterise(short *spBuffer, bool *bpKnot, int arraysize){
 float *get_pitch_of_sample(short *x, int arraysize){
 
 	int i = 0, j = 0;
-	double spCorrArray[512];
+	double *spCorrArray = (double *)malloc(sizeof(double)*(arraysize/2));
 	bool max_true;
 	int nfirstpeak = 0, nsecondpeak = 0;			//first peak is zero obviously
 	float distance = 0;
@@ -371,7 +373,7 @@ float *get_pitch_of_sample(short *x, int arraysize){
 
 	for (i = 0; i < arraysize / 2; i++){
 		spCorrArray[i] = 0;
-		for (j = 0; j < arraysize / 2; j++){
+		for (j = 0; j+i < arraysize / 2; j++){
 			spCorrArray[i] = spCorrArray[i] + ((x[j] / factor) * (x[j + i] / factor));
 		}
 	}
@@ -398,13 +400,14 @@ float *get_pitch_of_sample(short *x, int arraysize){
 	if (nfirstpeak - nsecondpeak<0){
 		ffrequency[0] = 0.0;
 		ffrequency[1] = 0.0;
+		free(spCorrArray);
 		return ffrequency;
 	}
 
 
 	ffrequency[0] = 44100.0 / (distance*1.0);
 	ffrequency[1] = nsecondpeak/nfirstpeak;
-	//free(spCorrArray);
+	free(spCorrArray);
 	return ffrequency;
 }
 
@@ -561,6 +564,75 @@ double *get_discrete_convolution(short *x, int x_size,short *h, int h_size){
 	}
 
 	return y;
+}
+
+float *get_gaussian_filter(int size, float sigma){
+	int i = 0, m = size/2;
+	float sum = 0;
+	float *filter;
+	if (size % 2 == 0){
+		return NULL;
+	}
+	else{
+		filter = (float *)malloc(sizeof(float)*size);
+		for (i = 0; i <= m; i++){
+			filter[m - i] = exp(-(i * i * 1.0) / (2.0*sigma*sigma));
+		}
+		for (i = 0; i < m; i++){
+			filter[m  + i + 1] = filter[m - i - 1];
+		}
+		for (i = 0; i < size; i++){
+			sum = sum + filter[i];
+		}
+		for (i = 0; i < size; i++){
+			filter[i] = filter[i] / sum;
+		}
+	}
+	return filter;
+}
+
+
+
+short *filter1D(short *inputArray, int inputSize, float *filter,int filterSize,int center, int boundaryType){
+	int i,j;
+	boundaryType = 0;	//remove after specifying the boundaries
+	short * newInput, *newOutput;
+	float temp;
+/*	if (filter != NULL){
+		while (filter[filterSize] != NULL){
+			filterSize++;
+		}
+	}
+*/	newOutput = (short *)malloc(sizeof(short)*inputSize);
+	newInput = (short *)malloc(sizeof(short)*(inputSize+filterSize-1));
+
+	switch (boundaryType){
+		case(1) :			//abcd -> aaa|abcd|ddd
+			break;
+		case(2) :
+			break;
+		default:			//abcd -> dcb|abcd|cba
+			for (i = 0; i < center; i++){
+				newInput[center - 1 - i] = inputArray[i + 1];
+			}
+			for (i = 0; i < inputSize; i++){
+				newInput[i + center] = inputArray[i];
+			}
+			for (i = 0; i < filterSize - center - 1; i++){
+				newInput[(inputSize - 1 + center) + 1 + i] = inputArray[(inputSize - 1) - 1 - i];
+			}
+		break;
+	};
+
+	for (i = center; i < center + inputSize; i++){
+		temp = 0;
+		for (j = 0; j < filterSize; j++){
+			temp = temp + filter[j] * ((float)newInput[i - center + j]);
+		}
+		newOutput[i - center] = (short)temp;
+	}
+	free(newInput);
+	return newOutput;
 }
 
 
